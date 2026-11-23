@@ -99,11 +99,30 @@ def expand_bang_shell(text: str, cwd: Path) -> str:
 def load_command_prompt(
     project_dir: Path, command_name: str, user_args: str
 ) -> tuple[dict[str, str], str]:
-    """Load and expand a command from .opencode/commands/<name>.md."""
+    """Load and expand a command from .opencode/commands/<name>.md.
+
+    Accepts both dotted OpenCode names (`speckit.clarify`) and hyphenated
+    Spec Kit doc names (`speckit-clarify`).
+    """
     cmd_name = command_name.lstrip("/")
-    cmd_path = project_dir / ".opencode" / "commands" / f"{cmd_name}.md"
-    if not cmd_path.is_file():
-        raise FileNotFoundError(f"Command file not found: {cmd_path}")
+    commands_dir = project_dir / ".opencode" / "commands"
+    candidates = [cmd_name]
+    if cmd_name.startswith("speckit-"):
+        candidates.append("speckit." + cmd_name[len("speckit-") :])
+    elif cmd_name.startswith("speckit."):
+        candidates.append("speckit-" + cmd_name[len("speckit.") :])
+
+    cmd_path: Path | None = None
+    for cand in candidates:
+        probe = commands_dir / f"{cand}.md"
+        if probe.is_file():
+            cmd_path = probe
+            cmd_name = cand
+            break
+    if cmd_path is None:
+        raise FileNotFoundError(
+            f"Command file not found in {commands_dir} for {command_name!r}"
+        )
 
     raw = cmd_path.read_text(encoding="utf-8")
     meta, body = parse_frontmatter(raw)

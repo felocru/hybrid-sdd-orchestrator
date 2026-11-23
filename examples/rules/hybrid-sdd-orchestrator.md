@@ -42,11 +42,16 @@ python3 "$RUNNER" --agent tech-lead --prompt "<instrucción>"
 - **No interrumpas al usuario** para decisiones de negocio o arquitectura que puedan deducirse de `historias.md`, `constitution.md`, `product-owner` o `tech-lead`.
 - Registra **cada** pregunta contestada y **cada** decisión de negocio/arquitectura tomada en **`DECISIONS.md`** (en la raíz del proyecto).
 
-## 3. Flujo de orquestación y los 4 Gates por HU
+## 3. Ruta completa de orquestación y los 4 Gates por HU
 
-1. **Constitución (una vez por proyecto):** si `.specify/memory/constitution.md` aún es plantilla, extrae/infiere los datos base desde `historias.md` + `product-owner`/`tech-lead`, ejecuta `speckit.constitution` y registra decisiones en `DECISIONS.md`.
-2. **Especificación (`/speckit.specify`):** lanza `speckit.specify` con la HU. Resuelve `awaiting_form` y dudas en `response_text` con `product-owner` (`tech-lead` si aplica) y registra en `DECISIONS.md`. Valida Mermaid con `mmdc`. **Gate 1:** aprobación de `product-owner` (`STATUS: APPROVED`).
-3. **Planificación (`/speckit.plan`):** lanza `speckit.plan`, resuelve formularios/dudas con `tech-lead`/`product-owner`, registra en `DECISIONS.md`, valida Mermaid + `contracts/ui-contract.md`. **Gate 2:** aprobación de `tech-lead` (`STATUS: APPROVED`).
-4. **Tareas (`/speckit.tasks`):** lanza `speckit.tasks`, revisa `response_text` y verifica con `tech-lead` que solo haya tareas de Build y caja blanca.
-5. **Suite de Aceptación aislada (`/speckit.hybrid-sdt.sdt-test`):** ejecuta con `sdt-tester` aislado. **Gate 3:** aprobación de `product-owner` y commit congelando `tests/acceptance/`.
-6. **Implementación (`/speckit.implement`):** ejecuta `speckit.implement`, resuelve cualquier duda en `DECISIONS.md`, verifica que `tests/acceptance/` siga intacta, corre pruebas, revisión técnica del `tech-lead` y validación funcional (**Gate 4**) de `product-owner`.
+Ejecuta la **ruta completa de producción de Spec Kit + Hybrid SDD** (en OpenCode se instalan como `speckit.<cmd>`, y `run_opencode.py` acepta tanto `speckit.<cmd>` como `speckit-<cmd>`):
+
+1. **Constitución (`speckit.constitution`, una vez por proyecto):** si `.specify/memory/constitution.md` aún es plantilla, extrae/infiere los datos base desde `historias.md` + `product-owner`/`tech-lead`, ejecuta `speckit.constitution` y registra decisiones en `DECISIONS.md`.
+2. **Especificación (`speckit.specify`):** lanza `speckit.specify` con la HU, resuelve dudas y registra en `DECISIONS.md`.
+3. **Clarificación (`speckit.clarify`):** lanza `speckit.clarify` antes del plan, resuelve todas las preguntas con `product-owner`/`tech-lead` y registra en `DECISIONS.md`. Valida Mermaid con `mmdc`. **Gate 1:** aprobación de `product-owner` (`STATUS: APPROVED`).
+4. **Planificación (`speckit.plan`):** lanza `speckit.plan`, resuelve dudas, valida Mermaid + `contracts/ui-contract.md` (+ diseño vía MCP). **Gate 2:** aprobación de `tech-lead` (`STATUS: APPROVED`).
+5. **Checklist (`speckit.checklist`):** lanza `speckit.checklist` tras el plan y revisa con `product-owner`/`tech-lead` que no queden requisitos ambiguos antes de tareas.
+6. **Tareas (`speckit.tasks`):** lanza `speckit.tasks`, revisa `response_text` y verifica con `tech-lead` que solo haya tareas de Build y caja blanca.
+7. **Análisis transversal (`speckit.analyze`):** lanza `speckit.analyze` tras `tasks` y remedia cualquier inconsistencia crítica antes de congelar pruebas o implementar.
+8. **Suite de Aceptación aislada (`speckit.hybrid-sdt.sdt-test`):** ejecuta con `sdt-tester` aislado. **Gate 3:** aprobación de `product-owner` y commit congelando `tests/acceptance/`.
+9. **Implementación y Convergencia (`speckit.implement` + `speckit.converge`):** ejecuta `speckit.implement`, luego corre `speckit.converge` en bucle junto a `speckit.implement` hasta converger sin tareas pendientes, verifica que `tests/acceptance/` siga intacta, corre pruebas, revisión técnica del `tech-lead` y validación funcional (**Gate 4**) de `product-owner`.

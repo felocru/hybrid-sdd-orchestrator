@@ -6,7 +6,7 @@ Skill global para **Google Antigravity (`agy`)** que convierte a Antigravity en 
 
 * **Antigravity (`agy`) = Orquestador autónomo:** lee `historias.md`, controla el avance por cada HU, valida diagramas Mermaid con `mmdc`, gestiona Git/worktrees, responde formularios y preguntas sin interrumpir al usuario y registra cada decisión en `DECISIONS.md`.
 * **OpenCode = Motor de ejecución y revisión:**
-  * Ejecuta los comandos Spec Kit (`/speckit.constitution`, `/speckit.specify`, `/speckit.plan`, `/speckit.tasks`, `/speckit.hybrid-sdt.sdt-test`, `/speckit.implement`), incluyendo el uso de tus **MCPs** conectados en OpenCode.
+  * Ejecuta la **ruta completa de producción** de Spec Kit (`speckit.constitution`, `speckit.specify`, `speckit.clarify`, `speckit.plan`, `speckit.checklist`, `speckit.tasks`, `speckit.analyze`, `speckit.hybrid-sdt.sdt-test`, `speckit.implement` y el bucle `speckit.converge`), incluyendo el uso de tus **MCPs** conectados en OpenCode.
   * Ejecuta los subagentes especialistas en modo solo lectura:
     * **`product-owner`** (Gates 1, 3 y 4 + clarificaciones de negocio).
     * **`tech-lead`** (Gate 2 + revisión de `tasks.md` y auditoría técnica).

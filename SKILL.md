@@ -117,28 +117,50 @@ Cada vez que respondas preguntas de OpenCode (`awaiting_form` o `response_text`)
 2. Si `.specify/memory/constitution.md` aún es plantilla (`[PROJECT_NAME]`):
    - Extrae nombre, alcance, stack y BD desde `historias.md` (y si algún dato técnico falta, consúltalo con `tech-lead` + `product-owner` alineado a la visión de `historias.md`, dejando constancia en `DECISIONS.md`).
    - Ejecuta `--command speckit.constitution` una sola vez (resolviendo cualquier `awaiting_form` o pregunta en texto de forma autónoma y registrándolo en `DECISIONS.md`).
-3. Procesa cada HU (secuencialmente o en `git worktree` paralelos si son independientes) cumpliendo estrictamente los **4 Gates**:
+3. Procesa cada HU (secuencialmente o en `git worktree` paralelos si son independientes) ejecutando **la ruta completa de producción de Spec Kit + Hybrid SDD** (nota: en OpenCode los comandos instalados en `.opencode/commands/` usan punto, p. ej. `speckit.clarify`, aunque `run_opencode.py` también acepta `speckit-clarify`):
 
-### Ciclo por HU
-1. **Especificación (`/speckit.specify`) + Gate 1 (`product-owner`):**
+### Ruta completa por cada HU (9 comandos + `hybrid-sdt` + 4 Gates)
+
+1. **Especificación (`speckit.specify`):**
    - Lanza `--command speckit.specify --args "<HU>"`.
-   - Resuelve `awaiting_form` y cualquier pregunta en `response_text` con `product-owner` (y `tech-lead` si aplica) y registra en `DECISIONS.md`.
-   - Valida diagramas Mermaid de `spec.md` con `mmdc`.
-   - **Gate 1:** envía `spec.md` + HU a `--agent product-owner`. Si devuelve `CHANGES_REQUIRED`, re-itera con `--session` (documentando decisiones de alcance en `DECISIONS.md`) hasta `STATUS: APPROVED`.
-2. **Planificación (`/speckit.plan`) + Gate 2 (`tech-lead`):**
+   - Resuelve `awaiting_form` y dudas en `response_text` con `product-owner` (y `tech-lead` si aplica), registrando en `DECISIONS.md`.
+
+2. **Clarificación (`speckit.clarify` — puerta previa al plan):**
+   - Lanza `--command speckit.clarify`.
+   - Responde de forma autónoma todas las preguntas de clarificación (`awaiting_form` o `response_text`) consultando a `product-owner` (negocio/alcance) y `tech-lead` (impacto técnico) según la visión de `historias.md`, hasta consolidar las respuestas en `spec.md`. Registra cada respuesta en `DECISIONS.md`.
+   - Valida los diagramas Mermaid de `spec.md` con `mmdc`.
+   - **Gate 1:** envía `spec.md` + HU a `--agent product-owner`. Re-itera en OpenCode hasta recibir `STATUS: APPROVED`.
+
+3. **Planificación (`speckit.plan`):**
    - Lanza `--command speckit.plan`.
-   - Resuelve `awaiting_form` y preguntas/clarificaciones en `response_text` con `tech-lead` / `product-owner` y registra en `DECISIONS.md`.
-   - Valida Mermaid (`C4Component`, `sequenceDiagram`, `classDiagram`, `erDiagram`) con `mmdc` y verifica `contracts/ui-contract.md` (si hay UI).
+   - Resuelve `awaiting_form` y dudas en `response_text` con `tech-lead` / `product-owner` y registra en `DECISIONS.md`.
+   - Valida Mermaid (`C4Component`, `sequenceDiagram`, `classDiagram`, `erDiagram`) con `mmdc` y verifica `contracts/ui-contract.md` (+ diseño vía MCP y snapshot en `design/` si hay UI).
    - **Gate 2:** envía `plan.md`, `data-model.md` y `contracts/` a `--agent tech-lead`. Re-itera hasta `STATUS: APPROVED`, registrando decisiones de arquitectura en `DECISIONS.md`.
-3. **Tareas (`/speckit.tasks`) + revisión técnica:**
-   - Lanza `--command speckit.tasks`, analiza `response_text` y valida con `--agent tech-lead` que solo existan tareas de Build y caja blanca (sin tareas de aceptación) y se mantenga la precondición de aceptación congelada.
-4. **Suite de Aceptación aislada (`/speckit.hybrid-sdt.sdt-test`) + Gate 3 (`product-owner`):**
-   - Lanza `--command speckit.hybrid-sdt.sdt-test` (usa `sdt-tester` aislado).
-   - **Gate 3:** envía `tests/acceptance/README.md` y `tests/acceptance/` a `--agent product-owner` para confirmar cobertura 100% de los `CA-n`.
+
+4. **Checklist de requisitos (`speckit.checklist` — puerta de calidad de especificación/plan):**
+   - Lanza `--command speckit.checklist` (enfocado al dominio relevante de la HU: UX, seguridad, API, datos, etc.).
+   - Revisa la checklist generada junto con `product-owner` / `tech-lead` para detectar requisitos ambiguos o incompletos antes de generar tareas; si falta algo crítico, corrige `spec.md`/`plan.md` y regístralo en `DECISIONS.md`.
+
+5. **Tareas (`speckit.tasks`):**
+   - Lanza `--command speckit.tasks` y analiza `response_text`.
+   - Valida con `--agent tech-lead` que `tasks.md` contenga únicamente tareas de Build y caja blanca (sin tareas de aceptación) y mantenga la precondición de aceptación congelada.
+
+6. **Análisis transversal (`speckit.analyze` — puerta previa a implementación):**
+   - Lanza `--command speckit.analyze` (solo lectura entre `constitution.md`, `spec.md`, `plan.md` y `tasks.md`).
+   - Revisa el reporte completo: si existen hallazgos `CRITICAL` o inconsistencias frente a la constitución/contratos/tareas, resuélvelos con `tech-lead` y `product-owner`, aplica la remediación en el artefacto correspondiente vía OpenCode, documenta el ajuste en `DECISIONS.md` y vuelve a verificar consistencia.
+
+7. **Suite de Aceptación aislada (`speckit.hybrid-sdt.sdt-test`) + Gate 3:**
+   - Lanza `--command speckit.hybrid-sdt.sdt-test` (usa `sdt-tester` en contexto aislado).
+   - **Gate 3:** envía `tests/acceptance/README.md` y `tests/acceptance/` a `--agent product-owner` para confirmar trazabilidad 100% de los `CA-n`.
    - **Congela la suite** con un commit dedicado en `tests/acceptance/` antes de implementar.
-5. **Implementación (`/speckit.implement`) + Gate 4 (`tech-lead` y `product-owner`):**
+
+8. **Implementación (`speckit.implement`):**
    - Lanza `--command speckit.implement`, resolviendo cualquier `awaiting_form` o pregunta en `response_text` vía `tech-lead`/`product-owner` y registrando decisiones en `DECISIONS.md`.
    - Verifica con `git diff` que `tests/acceptance/` no fue modificada.
-   - Ejecuta/verifica pruebas de caja blanca y aceptación.
-   - Solicita revisión técnica final a `--agent tech-lead` y validación funcional (**Gate 4**) a `--agent product-owner`.
-6. Al finalizar todas las HUs, entrega al usuario un resumen ejecutivo con enlaces a los artefactos generados, el estado de los tests y un enlace directo a `DECISIONS.md`.
+
+9. **Bucle de Convergencia (`speckit.converge` ↔ `speckit.implement`):**
+   - Lanza `--command speckit.converge` para auditar el código real frente a `spec.md`, `plan.md` y `tasks.md`.
+   - Si `speckit.converge` detecta brechas y añade tareas en `## Phase N: Convergence` dentro de `tasks.md`, documenta la brecha en `DECISIONS.md`, ejecuta nuevamente `--command speckit.implement` y vuelve a correr `--command speckit.converge` en bucle hasta que reporte convergencia total (`tasks.md` sin tareas pendientes nuevas).
+   - Verifica nuevamente con `git diff` que `tests/acceptance/` siga intacta, corre pruebas de caja blanca y aceptación, y solicita auditoría técnica final a `--agent tech-lead` y validación funcional (**Gate 4**) a `--agent product-owner`.
+
+10. Al finalizar todas las HUs, entrega al usuario un resumen ejecutivo con enlaces a los artefactos generados, el estado de los tests y un enlace directo a `DECISIONS.md`.
