@@ -56,7 +56,7 @@ Al iniciar en cualquier proyecto, verifica antes de procesar HUs:
 
 ## 3. Cómo invocar OpenCode, analizar respuestas y decidir sin el usuario
 
-Usa siempre [run_opencode.py](./scripts/run_opencode.py). Por defecto utiliza el servidor de fondo (`opencode service`) vía `opencode api`, **preservando formularios dinámicos (`question`)** y auto-aprobando permisos `ask`:
+Usa siempre [run_opencode.py](./scripts/run_opencode.py). Por defecto utiliza el servidor de fondo (`opencode service`) vía `opencode api`, **preservando formularios dinámicos (`question`)** y **auto-aprobando permisos `ask` tanto de la sesión principal como de cualquier subagente hijo** (por ejemplo `sdt-tester` al ejecutar pruebas en `shell`, manteniendo intactos sus `deny` de aislamiento):
 
 ```bash
 RUNNER="$HOME/.gemini/config/skills/hybrid-sdd-orchestrator/scripts/run_opencode.py"

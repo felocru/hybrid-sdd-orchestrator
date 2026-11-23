@@ -176,7 +176,7 @@ def parse_model_ref(model: str) -> dict[str, str]:
         raise ValueError(f"Model must be provider/model[#variant], got: {model}")
     provider_id, rest = model.split("/", 1)
     model_id = rest.split("#", 1)[0]
-    ref = {"providerID": provider_id, "modelID": model_id}
+    ref = {"providerID": provider_id, "id": model_id}
     if "#" in rest:
         ref["variant"] = rest.split("#", 1)[1]
     return ref
@@ -200,9 +200,14 @@ def extract_session_messages(
     tools: list[dict[str, Any]] = []
     last_assistant_text = ""
     all_assistant_texts: list[str] = []
+    session_error: Any = None
 
     for msg in msgs:
-        if msg.get("type") != "assistant":
+        mtype = msg.get("type")
+        if mtype == "idle" and msg.get("outcome") == "failed" and msg.get("error"):
+            session_error = msg["error"]
+            continue
+        if mtype != "assistant":
             continue
         msg_texts: list[str] = []
         for part in msg.get("content", []):
@@ -227,71 +232,125 @@ def extract_session_messages(
         "tools_used": tools,
         "response_text": last_assistant_text,
         "assistant_turns": len(all_assistant_texts),
+        "error": session_error,
     }
+
+
+def collect_session_tree(
+    opencode_bin: str,
+    root_session_id: str,
+    project_dir: Path,
+    server: str | None,
+) -> tuple[set[str], bool]:
+    """Return all session IDs in the tree rooted at `root_session_id` and whether any child is busy."""
+    tree_ids: set[str] = {root_session_id}
+    frontier: list[str] = [root_session_id]
+    any_child_busy = False
+
+    while frontier:
+        parent_id = frontier.pop()
+        children = api_call(
+            opencode_bin,
+            [
+                "session.list",
+                "--param",
+                f"directory={project_dir}",
+                "--param",
+                f"parentID={parent_id}",
+                "--param",
+                "limit=100",
+            ],
+            server,
+        ).get("data", [])
+        for child in children:
+            cid = child.get("id")
+            if not cid or cid in tree_ids:
+                continue
+            tree_ids.add(cid)
+            frontier.append(cid)
+            tinfo = child.get("time") or {}
+            b_ts = tinfo.get("busy") or 0
+            i_ts = tinfo.get("idle") or 0
+            if b_ts and not (i_ts >= b_ts and i_ts > 0):
+                any_child_busy = True
+
+    return tree_ids, any_child_busy
 
 
 def wait_for_session_or_form(
     opencode_bin: str,
     session_id: str,
+    project_dir: Path,
     server: str | None,
     auto_approve_permissions: bool,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    """Wait until session completes, or return early if a dynamic form is pending."""
+    """Wait until session tree completes, handling child subagent permissions and forms."""
     deadline = time.time() + timeout_seconds
     approved_permissions: list[dict[str, Any]] = []
+    loc_param = f"location[directory]={project_dir}"
 
     while time.time() < deadline:
-        forms = api_call(
-            opencode_bin,
-            ["session.form.list", "--param", f"sessionID={session_id}"],
-            server,
-        )["data"]
-        if forms:
-            form = forms[0]
-            return {
-                "status": "awaiting_form",
-                "session_id": session_id,
-                "form_id": form["id"],
-                "form": form,
-                "approved_permissions": approved_permissions,
-                "exit_code": 0,
-            }
+        all_forms = api_call(
+            opencode_bin, ["form.list", "--param", loc_param], server
+        ).get("data", [])
+        all_perms = api_call(
+            opencode_bin, ["permission.request.list", "--param", loc_param], server
+        ).get("data", [])
 
-        perms = api_call(
-            opencode_bin,
-            ["session.permission.list", "--param", f"sessionID={session_id}"],
-            server,
-        )["data"]
-        if perms:
-            if not auto_approve_permissions:
+        tree_ids: set[str] | None = None
+        if all_forms or all_perms:
+            tree_ids, _ = collect_session_tree(
+                opencode_bin, session_id, project_dir, server
+            )
+
+        if all_forms and tree_ids is not None:
+            tree_forms = [f for f in all_forms if f.get("sessionID") in tree_ids]
+            if tree_forms:
+                form = tree_forms[0]
                 return {
-                    "status": "awaiting_permission",
+                    "status": "awaiting_form",
                     "session_id": session_id,
-                    "permissions": perms,
+                    "form_session_id": form.get("sessionID"),
+                    "form_id": form["id"],
+                    "form": form,
+                    "approved_permissions": approved_permissions,
                     "exit_code": 0,
                 }
-            for perm in perms:
-                api_call(
-                    opencode_bin,
-                    [
-                        "session.permission.reply",
-                        "--param",
-                        f"sessionID={session_id}",
-                        "--param",
-                        f"requestID={perm['id']}",
-                        "--data",
-                        json.dumps({"decision": "once"}),
-                    ],
-                    server,
-                )
-                approved_permissions.append(
-                    {
-                        "id": perm.get("id"),
-                        "action": perm.get("action"),
-                        "patterns": perm.get("patterns"),
+
+        if all_perms and tree_ids is not None:
+            tree_perms = [p for p in all_perms if p.get("sessionID") in tree_ids]
+            if tree_perms:
+                if not auto_approve_permissions:
+                    return {
+                        "status": "awaiting_permission",
+                        "session_id": session_id,
+                        "permissions": tree_perms,
+                        "exit_code": 0,
                     }
-                )
+                for perm in tree_perms:
+                    target_sid = perm.get("sessionID") or session_id
+                    api_call(
+                        opencode_bin,
+                        [
+                            "session.permission.reply",
+                            "--param",
+                            f"sessionID={target_sid}",
+                            "--param",
+                            f"requestID={perm['id']}",
+                            "--data",
+                            json.dumps({"decision": "always"}),
+                        ],
+                        server,
+                    )
+                    approved_permissions.append(
+                        {
+                            "id": perm.get("id"),
+                            "session_id": target_sid,
+                            "action": perm.get("action"),
+                            "resources": perm.get("resources"),
+                        }
+                    )
 
         info = api_call(
             opencode_bin,
@@ -301,33 +360,58 @@ def wait_for_session_or_form(
         time_info = info.get("time") or {}
         busy_ts = time_info.get("busy") or 0
         idle_ts = time_info.get("idle") or 0
-        is_idle = (not busy_ts) or (idle_ts >= busy_ts and idle_ts > 0)
-        if is_idle:
-            forms_after = api_call(
-                opencode_bin,
-                ["session.form.list", "--param", f"sessionID={session_id}"],
-                server,
-            )["data"]
+        is_root_idle = (not busy_ts) or (idle_ts >= busy_ts and idle_ts > 0)
+        if is_root_idle:
+            tree_ids_after, any_child_busy = collect_session_tree(
+                opencode_bin, session_id, project_dir, server
+            )
+            forms_after = [
+                f
+                for f in api_call(
+                    opencode_bin, ["form.list", "--param", loc_param], server
+                ).get("data", [])
+                if f.get("sessionID") in tree_ids_after
+            ]
             if forms_after:
                 form = forms_after[0]
                 return {
                     "status": "awaiting_form",
                     "session_id": session_id,
+                    "form_session_id": form.get("sessionID"),
                     "form_id": form["id"],
                     "form": form,
                     "approved_permissions": approved_permissions,
                     "exit_code": 0,
                 }
+            perms_after = [
+                p
+                for p in api_call(
+                    opencode_bin,
+                    ["permission.request.list", "--param", loc_param],
+                    server,
+                ).get("data", [])
+                if p.get("sessionID") in tree_ids_after
+            ]
+            if perms_after or any_child_busy:
+                time.sleep(0.5)
+                continue
+
             extracted = extract_session_messages(opencode_bin, session_id, server)
-            return {
-                "status": "completed",
+            outcome = info.get("outcome")
+            failed = outcome == "failed" or extracted.get("error") is not None
+            result = {
+                "status": "failed" if failed else "completed",
+                "outcome": outcome,
                 "session_id": session_id,
                 "tokens": info.get("tokens"),
                 "cost": info.get("cost"),
                 "approved_permissions": approved_permissions,
                 **extracted,
-                "exit_code": 0,
+                "exit_code": 1 if failed else 0,
             }
+            if result["error"] is None:
+                result.pop("error", None)
+            return result
 
         time.sleep(1.0)
 
@@ -477,12 +561,22 @@ def main() -> int:
         if not args.session or not args.answer:
             parser.error("--reply-form requires both --session and --answer '<json>'.")
         answer_obj = json.loads(args.answer)
+        form_session_id = args.session
+        all_forms = api_call(
+            opencode_bin,
+            ["form.list", "--param", f"location[directory]={project_dir}"],
+            args.server,
+        ).get("data", [])
+        for f in all_forms:
+            if f.get("id") == args.reply_form and f.get("sessionID"):
+                form_session_id = f["sessionID"]
+                break
         api_call(
             opencode_bin,
             [
                 "session.form.reply",
                 "--param",
-                f"sessionID={args.session}",
+                f"sessionID={form_session_id}",
                 "--param",
                 f"formID={args.reply_form}",
                 "--data",
@@ -493,6 +587,7 @@ def main() -> int:
         result = wait_for_session_or_form(
             opencode_bin,
             args.session,
+            project_dir,
             args.server,
             auto_approve_permissions=not args.no_auto_permission,
             timeout_seconds=args.timeout,
@@ -566,6 +661,7 @@ def main() -> int:
     result = wait_for_session_or_form(
         opencode_bin,
         session_id,
+        project_dir,
         args.server,
         auto_approve_permissions=not args.no_auto_permission,
         timeout_seconds=args.timeout,
